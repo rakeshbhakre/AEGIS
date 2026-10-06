@@ -1,0 +1,11 @@
+{
+ "bundle_bytes": 601187,
+ "parity_max_rel_diff": 0.0,
+ "edge_infer_ms_p50": 0.077,
+ "edge_infer_ms_p99": 0.163,
+ "theta": 12.770000457763672,
+ "envelope": {
+  "mem_max_kb_budget": 512000,
+  "note": "bundle is < 1 MB; latency x100 margin assumed for rad-tolerant OBC"
+ }
+}

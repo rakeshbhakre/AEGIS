@@ -1,0 +1,191 @@
+{
+ "twin": {
+  "per_fault": [
+   {
+    "fault": "heater_stall",
+    "episodes": 5,
+    "detect_rate": 0.6,
+    "ttd_med_s": 459.0,
+    "rca_top1": 0.0,
+    "rca_top3": 0.333,
+    "guarded_auto": 0,
+    "proposed": 3,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "cell_sag",
+    "episodes": 5,
+    "detect_rate": 0.6,
+    "ttd_med_s": 102.0,
+    "rca_top1": 0.333,
+    "rca_top3": 1.0,
+    "guarded_auto": 0,
+    "proposed": 3,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "wheel_friction",
+    "episodes": 5,
+    "detect_rate": 1.0,
+    "ttd_med_s": 36.0,
+    "rca_top1": 1.0,
+    "rca_top3": 1.0,
+    "guarded_auto": 0,
+    "proposed": 5,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "thermal_runaway",
+    "episodes": 5,
+    "detect_rate": 0.8,
+    "ttd_med_s": 101.0,
+    "rca_top1": 0.0,
+    "rca_top3": 0.25,
+    "guarded_auto": 0,
+    "proposed": 4,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "payload_overload",
+    "episodes": 5,
+    "detect_rate": 0.4,
+    "ttd_med_s": 99.0,
+    "rca_top1": 0.0,
+    "rca_top3": 1.0,
+    "guarded_auto": 0,
+    "proposed": 2,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "sensor_drift",
+    "episodes": 5,
+    "detect_rate": 0.8,
+    "ttd_med_s": 43.5,
+    "rca_top1": 0.25,
+    "rca_top3": 0.75,
+    "guarded_auto": 0,
+    "proposed": 4,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "sensor_stuck",
+    "episodes": 5,
+    "detect_rate": 0.8,
+    "ttd_med_s": 42.5,
+    "rca_top1": 0.25,
+    "rca_top3": 1.0,
+    "guarded_auto": 0,
+    "proposed": 4,
+    "false_auto_on_wrong_cause": 0
+   },
+   {
+    "fault": "sensor_bias",
+    "episodes": 5,
+    "detect_rate": 0.8,
+    "ttd_med_s": 325.0,
+    "rca_top1": 0.0,
+    "rca_top3": 0.0,
+    "guarded_auto": 0,
+    "proposed": 4,
+    "false_auto_on_wrong_cause": 0
+   }
+  ],
+  "unmatched_fp_per_day": 1.044,
+  "episodes": 40,
+  "detections": 29
+ },
+ "datafault": {
+  "injected": 28,
+  "health_false_alarms": 2,
+  "data_origin_alerts": 2,
+  "rejection_rate": 0.929
+ },
+ "smap": {
+  "satellites": [
+   {
+    "sat": "T-2",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 1,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   },
+   {
+    "sat": "T-1",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 2,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   },
+   {
+    "sat": "S-1",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 1,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   },
+   {
+    "sat": "P-14",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 1,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   },
+   {
+    "sat": "P-10",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 1,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   },
+   {
+    "sat": "P-1",
+    "f_event": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 3,
+    "fp_per_day": 0.0,
+    "ttd_median_s": 0.0,
+    "ttd_p90_s": 0.0
+   }
+  ],
+  "mean": {
+   "f_event": 0.0,
+   "precision": 0.0,
+   "recall": 0.0,
+   "fp_per_day": 0.0
+  }
+ },
+ "edge": {
+  "step_ms_p50": 13.48,
+  "step_ms_p99": 22.84,
+  "rss_peak_mb": 294.6,
+  "note": "single-process numpy path; flight OBC would run the same forward in int8"
+ }
+}
