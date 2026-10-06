@@ -2,6 +2,7 @@
 Run:  uvicorn aegis.api.server:app --host 0.0.0.0 --port 8890
 """
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import json
 import math
@@ -111,6 +112,10 @@ def _current_source():
 @app.websocket("/ws")
 async def ws_ep(ws: WebSocket):
     await ws.accept()
+    # wait for engine warmup before subscribing
+    while eng is None:
+        await ws.send_json({"type": "status", "stats": {"warming": True, "note": "engine calibrating…"}})
+        await asyncio.sleep(1)
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     eng.subscribers.append(q)
     try:
@@ -202,7 +207,7 @@ async def live():
             "z": ([round(float(v), 2) for v in z] if z is not None else []),
             "values": vals, "marks": marks, "phase": round(phase, 5),
             "active": active, "dp": dp, "last": last,
-            "events_n": len(eng.events)})
+            "events_n": eng.total_events})
 
 
 @app.get("/api/state")
@@ -457,12 +462,8 @@ def _sky_blocking():
                         for f in big]
         return wx
 
-    def _isro_one(name, catnr, jd):
-        txt = _get_text(f"https://celestrak.org/NORAD/elements/gp.php?CATNR={catnr}&FORMAT=tle", timeout=7)
-        lns = [l for l in txt.splitlines() if l.strip()]
-        if len(lns) < 3:
-            return {"name": name, "id": catnr, "err": "no TLE on CelesTrak"}
-        sat = twoline2rv(lns[1], lns[2], wgs72)
+    def _isro_prop(name, catnr, l1, l2, jd):
+        sat = twoline2rv(l1, l2, wgs72)
         r, v = _prop(sat, (jd - (sat.jdsatepoch + sat.jdsatepochF)) * 1440.0)
         if getattr(sat, "error", 0):
             return {"name": name, "id": catnr, "err": f"propagate error {sat.error}"}
@@ -477,13 +478,38 @@ def _sky_blocking():
                 "lon": round((math.degrees(math.atan2(y, x)) + 540) % 360 - 180, 3),
                 "alt_km": round(math.hypot(rho, z) - 6378.137, 1),
                 "vel_kms": round(math.hypot(*v), 2),
-                "tle_epoch": lns[1][18:32].strip()}
+                "tle_epoch": l1[18:32].strip()}
+
+    def _isro_positions(jd):
+        """Live ISRO orbits from the fleet TLE cache + local SGP4. Per-request
+        CelesTrak CATNR fetches were rate-limited into timeouts (HTTP 503) — the
+        TLE epoch is hours old anyway, so cached orbital elements are the honest
+        input; the cache refreshes itself on its own schedule."""
+        fresh = bool(FLEET_CACHE["tle"]) and time.time() - FLEET_CACHE["t"] < FLEET_TTL
+        rows = {ln[0].upper(): ln for ln in ((FLEET_CACHE["tle"] or {}).get("isro") or [])}
+        for _kk, _vv in _ISRO_SPARE["rows"].items():
+            rows.setdefault(_kk, _vv)
+        if not rows:
+            _prime_isro()          # background, 10-min dedup: celestrak → tle-API fallback
+            return [{"name": n, "id": c, "waiting": "orbit data refreshing"} for n, c in ISRO_TLE.items()]
+        _ = fresh
+        sats = []
+        for name, catnr in ISRO_TLE.items():
+            hit = next((v for k, v in rows.items() if name.upper()[:8] in k), None)
+            if hit is None:
+                sats.append({"name": name, "id": catnr, "waiting": "orbit data refreshing"})
+                continue
+            try:
+                sats.append(_isro_prop(name, catnr, hit[1], hit[2], jd))
+            except Exception as e:
+                sats.append({"name": name, "id": catnr, "err": type(e).__name__})
+        return sats
 
     jd = _SKY_JD()
     with ThreadPoolExecutor(max_workers=6) as ex:
         f_iss = ex.submit(_iss)
         f_wx = ex.submit(_wx)
-        f_isro = {n: ex.submit(_isro_one, n, c, jd) for n, c in ISRO_TLE.items()} if have_sgp4 else {}
+        f_isro = ex.submit(_isro_positions, jd) if have_sgp4 else None
 
         try:
             out["iss"] = f_iss.result(9)
@@ -493,14 +519,36 @@ def _sky_blocking():
             out["wx"] = f_wx.result(11)
         except Exception as e:
             out["wx_err"] = f"nasa donki feed unreachable: {type(e).__name__}"
-        sats = []
-        for n, fx in f_isro.items():
+        if f_isro is not None:
             try:
-                sats.append(fx.result(9))
+                out["isro"] = f_isro.result(9)
             except Exception as e:
-                sats.append({"name": n, "err": f"{type(e).__name__}: {e}"})
-        if have_sgp4:
-            out["isro"] = sats
+                import traceback as _tb
+                _tb.print_exc()
+                out["isro_err"] = f"orbit positions unavailable: {type(e).__name__}: {e}"
+        # NOAA SWPC planetary K-index — real geomagnetic activity, updated minutely
+        try:
+            kp_rows = _get_json("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+                                timeout=6)
+            series = []
+            for r0 in (kp_rows[1:] if (isinstance(kp_rows, list) and kp_rows
+                                       and isinstance(kp_rows[0], list)) else kp_rows):
+                try:
+                    if isinstance(r0, dict):   # noaa-planetary-k-index.json (3 h cadence)
+                        t0, kp = (r0.get("time_tag") or "")[:16], float(r0.get("Kp") or 0)
+                    else:                       # [[time, Kp, frac, aKp], ...] rows
+                        t0, kp = r0[0][:16], float(r0[1]) + float(r0[2] or 0) / 3.0
+                except Exception:
+                    continue
+                series.append([t0, round(min(9.0, kp), 2)])
+            step = max(1, len(series) // 60)
+            series = series[::step][-60:]
+            out["kp"] = {"now": series[-1] if series else None,
+                         "max24": max((v for _, v in series), default=0.0),
+                         "storm": bool(series and series[-1][1] >= 5.0),
+                         "series": series}
+        except Exception as e:
+            out["kp_err"] = f"swpc unreachable: {type(e).__name__}"
     return out
 
 
@@ -597,12 +645,12 @@ def _fleet_tles():
         futs = [ex.submit(grab, g) for g in FLEET_GROUPS]
         isro_f = {n: ex.submit(_get_text, f"https://celestrak.org/NORAD/elements/gp.php?CATNR={c}&FORMAT=tle", 12)
                   for n, c in ISRO_TLE.items()}
-        for fu in futs:
+        for _g, fu in zip(FLEET_GROUPS, futs):
             try:
                 g, rows = fu.result(20)
                 out[g] = rows
             except Exception as e:
-                errs[g] = f"{type(e).__name__}"
+                errs[_g] = f"{type(e).__name__}"
         for n, fu in isro_f.items():
             try:
                 lns = [l for l in fu.result(15).splitlines() if l.strip()]
@@ -610,6 +658,24 @@ def _fleet_tles():
                     out.setdefault("isro", []).append((lns[0].strip(), lns[1], lns[2]))
             except Exception as e:
                 errs["isro:" + n] = f"{type(e).__name__}"
+    if out:                                  # ≥1 group succeeded → keep a disk snapshot
+        try:
+            import json as _j
+            snap = os.path.join(os.path.dirname(__file__), "..", "..", "data", "fleet_cache.json")
+            with open(snap, "w") as fh:
+                _j.dump(out, fh)
+        except Exception:
+            pass
+    elif FLEET_CACHE["tle"] is None:          # cold + throttled: serve last-good snapshot
+        try:
+            import json as _j
+            snap = os.path.join(os.path.dirname(__file__), "..", "..", "data", "fleet_cache.json")
+            out = _j.load(open(snap))
+            errs["snapshot"] = "celestrak unreachable — serving last-good TLE snapshot"
+            FLEET_CACHE["tle"], FLEET_CACHE["t"] = out, time.time() - FLEET_TTL + 1800
+            return out, errs
+        except Exception:
+            pass
     FLEET_CACHE["tle"], FLEET_CACHE["t"], FLEET_CACHE["errs"] = out, time.time(), errs
     return out, errs
 
@@ -812,8 +878,8 @@ async def passes(lat: float = 19.076, lon: float = 72.878, catnr: int = 25544, h
 # ---------------------------------------------------------------------------
 AI_CONFIG_DEFAULTS = {
     "providers": [
-        {"id": "ollama", "base": "http://127.0.0.1:11434/v1",
-         "model": "llama3.1:8b", "api_key_env": None,
+        {"id": "ollama", "base": "https://splicing-wasp-germless.ngrok-free.dev/v1",
+         "model": "llama3.2:3b", "api_key_env": None,
          "note": "local, offline, private"},
         {"id": "openrouter", "base": "https://openrouter.ai/api/v1",
          "model": "meta-llama/llama-3.1-8b-instruct", "api_key_env": "OPENROUTER_API_KEY",
@@ -832,9 +898,22 @@ def _ai_config():
         c = json.load(open(p))
         for k, v in AI_CONFIG_DEFAULTS.items():
             c.setdefault(k, v)
+        # Fix: if api_key_env looks like an actual key (not an env var name),
+        # store it directly and clear api_key_env so _ai_chat uses it
+        for pr in c.get("providers", []):
+            kenv = pr.get("api_key_env") or ""
+            if kenv and (kenv.startswith("sk-") or kenv.startswith("key-")):
+                pr["_direct_key"] = kenv
+                pr["api_key_env"] = None
         return c, "data/ai_config.json"
     except Exception:
         return dict(AI_CONFIG_DEFAULTS), "defaults (ollama → openrouter → omniroute)"
+
+
+def _ai_ssl_context():
+    import certifi
+    import ssl
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 def _ai_chat(messages, cfg, want=None):
@@ -844,7 +923,7 @@ def _ai_chat(messages, cfg, want=None):
     provs = cfg["providers"] if not want else [p_ for p_ in cfg["providers"] if p_["id"] == want] or cfg["providers"]
     last = None
     for pr in provs:
-        key = os.environ.get(pr["api_key_env"], "") if pr.get("api_key_env") else "local"
+        key = pr.get("_direct_key") or (os.environ.get(pr["api_key_env"], "") if pr.get("api_key_env") else "local")
         if pr.get("api_key_env") and not key:
             tried.append((pr["id"], "no api key in env"))
             continue
@@ -855,11 +934,14 @@ def _ai_chat(messages, cfg, want=None):
         req = urllib.request.Request(pr["base"].rstrip("/") + "/chat/completions",
                                      data=body, method="POST")
         req.add_header("Content-Type", "application/json")
+        for name, value in (pr.get("headers") or {}).items():
+            req.add_header(str(name), str(value))
         if key != "local":
             req.add_header("Authorization", "Bearer " + key)
         try:
             t0 = time.time()
-            with urllib.request.urlopen(req, timeout=30) as r:
+            ctx = _ai_ssl_context() if pr["base"].startswith("https") else None
+            with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
                 d = json.loads(r.read().decode())
             txt = d["choices"][0]["message"]["content"]
             return {"text": txt, "provider": pr["id"], "model": d.get("model", pr["model"]),
@@ -931,8 +1013,12 @@ async def ai_status():
             st["state"] = "no-key"
         else:
             try:
-                rq = urllib.request.Request(pr["base"].rstrip("/") + "/models")
-                with urllib.request.urlopen(rq, timeout=2.5) as r:
+                rq = urllib.request.Request(
+                    pr["base"].rstrip("/") + "/models",
+                    headers={str(name): str(value)
+                             for name, value in (pr.get("headers") or {}).items()})
+                ctx = _ai_ssl_context() if pr["base"].startswith("https") else None
+                with urllib.request.urlopen(rq, timeout=2.5, context=ctx) as r:
                     st["state"] = "reachable"
                     try:
                         ms = json.loads(r.read().decode()).get("data") or []
@@ -969,7 +1055,8 @@ async def ai_explain(body: dict):
                         b["evidence"] = [{"channel": a.get("channel"), "stat": str(a.get("direction", "")) + " " + str(a.get("timescale", "")),
                                          "z": float(a.get("z", 0.0)), "theta": th} for a in b["attrib"]]
                     b.setdefault("channels", [a.get("channel") for a in b.get("attrib", [])])
-                    b["context"] = {"n_events_total": len(pool), "mode": _STATE.get("mode"), "theta": th}
+                    b["context"] = {"n_events_total": eng_g.total_events if eng_g else len(pool),
+                                     "mode": _STATE.get("mode"), "theta": th}
                     if b.get("causes"):
                         b["causes"] = [{"cause": c.get("fault_id") or c.get("name") or "unknown",
                                        "score": c.get("p", c.get("score", 0.0)),
@@ -1030,6 +1117,52 @@ async def crew():
         return _san(await asyncio.wait_for(asyncio.to_thread(build), 9))
     except Exception as e:
         return {"err": "crew feed timed out"}
+
+
+_ISRO_PRIMING = {"t": 0.0}
+_ISRO_SPARE = {"rows": {}, "t": 0.0}
+
+
+def _prime_isro():
+    """One-shot background fetch of ISRO TLE lines into FLEET_CACHE (max every
+    10 min, never on the request path)."""
+    import threading
+    partial = len(_ISRO_SPARE["rows"]) < len(ISRO_TLE)
+    if time.time() - _ISRO_PRIMING["t"] < (150 if partial else 600):
+        return
+    _ISRO_PRIMING["t"] = time.time()
+
+    def one(name, catnr):
+        try:
+            txt = _get_text(f"https://celestrak.org/NORAD/elements/gp.php?CATNR={catnr}&FORMAT=tle", 8)
+            lns = [l for l in txt.splitlines() if l.strip()]
+            if len(lns) >= 3 and lns[1].startswith("1 "):
+                return (lns[0].strip(), lns[1], lns[2])
+        except Exception:
+            pass
+        try:  # public mirror, keyless — used when CelesTrak throttles us
+            d = _get_json(f"https://tle.ivanstanojevic.me/api/tle/{catnr}", timeout=8)
+            if d.get("line1") and d.get("line2"):
+                return (d.get("name") or name, d["line1"], d["line2"])
+        except Exception:
+            pass
+        return None
+
+    def work():
+        try:
+            rows = []
+            for n, c in ISRO_TLE.items():      # sequential: mirror rate-limit is 10 req/min
+                r0 = one(n, c)
+                if r0:
+                    rows.append(r0)
+                time.sleep(1.5)
+            if rows:
+                _ISRO_SPARE["rows"] = {r[0].upper(): list(r) for r in rows}
+                _ISRO_SPARE["t"] = time.time()
+        except Exception:
+            pass
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 @app.get("/api/sky")

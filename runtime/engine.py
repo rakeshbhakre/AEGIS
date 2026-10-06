@@ -16,6 +16,9 @@ from ..reasoning import rca as rca_mod
 from ..reasoning.guard import decide as guard_decide, state_from_values
 from ..reasoning import ontology
 
+MAX_RETAINED_EVENTS = 200
+MAX_LATENCY_SAMPLES = 4000
+
 
 class Engine:
     def __init__(self, channels, group_of=None, day_frames=3600, train_ae=True,
@@ -39,6 +42,7 @@ class Engine:
         self.k = 0
         self.fuse_stream: list[float] = []
         self.events: list[EvidenceBundle] = []
+        self.total_events = 0
         self.subscribers = []
         self.feedback_priors: dict = {}
         try:
@@ -167,6 +171,8 @@ class Engine:
             self.history = self.history[-keep:]; self.raw_hist = self.raw_hist[-keep:]
             self.qf_log = self.qf_log[-keep:]
             self.qf_q = self.qf_q[-keep:]
+            self.fuse_stream = self.fuse_stream[-keep:]
+            self.latency_ms = self.latency_ms[-MAX_LATENCY_SAMPLES:]
         closed = None
         if self._warm_done:
             w = self.history[-W:]
@@ -278,6 +284,9 @@ class Engine:
                         "fit_frames": self.n_frames_fit, "theta": round(self.conf.theta, 2),
                         "fp_budget": self.conf.fp_budget, "t": ev.t1})
         self.events.append(bundle)
+        self.total_events += 1
+        if len(self.events) > MAX_RETAINED_EVENTS:
+            del self.events[:-MAX_RETAINED_EVENTS]
         return bundle
 
     # ------------------------------------------------------------------ actions
@@ -389,11 +398,11 @@ class Engine:
             return None
 
     def stats(self):
-        lat = np.asarray(self.latency_ms[-4000:])
+        lat = np.asarray(self.latency_ms[-MAX_LATENCY_SAMPLES:])
         return {
             "k": self.k, "theta": round(self.conf.theta, 3),
             "fp_budget": self.conf.fp_budget, "curve": self.conf.curve,
-            "events": len(self.events), "score": round(self.fuse_stream[-1], 3) if self.fuse_stream else 0,
+            "events": self.total_events, "score": round(self.fuse_stream[-1], 3) if self.fuse_stream else 0,
             "lat_p50": round(float(np.percentile(lat, 50)), 2) if len(lat) else 0,
             "lat_p99": round(float(np.percentile(lat, 99)), 2) if len(lat) else 0,
             "ae": bool(self.ae.W_), "ae_val": (round(float(self.ae.W_.get("val") or 0.0), 4) if self.ae.W_ else None),

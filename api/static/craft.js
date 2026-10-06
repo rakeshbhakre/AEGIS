@@ -180,11 +180,11 @@
     wheelsGrp = new THREE.Group(); wheelsGrp.position.set(.62, .48, 0); busG.add(wheelsGrp);
     [[-.66, 0, "x"], [0, 0, "y"], [.66, 0, "z"]].forEach((w, i) => {
       const stand = new THREE.Mesh(new THREE.BoxGeometry(.14, .34, .14), mat(0x77838f));
-      stand.position.set(w[0], -.16, w[2]); wheelsGrp.add(stand);
+      stand.position.set(w[0], -.16, w[1]); wheelsGrp.add(stand);
       const gg = new THREE.CylinderGeometry(.3, .3, .34, 24);
       const gm = new THREE.Mesh(gg, mat(0x9aa8b8, { metalness: .6, roughness: .3, emissive: 0x000000 }));
       if (w[2] === "x") gm.rotation.z = Math.PI / 2;
-      gm.position.set(w[0], .12, w[2]);
+      gm.position.set(w[0], .12, w[1]);
       const hub = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, .38, 10), mat(0xd64545, { emissive: 0x611, emissiveIntensity: .4 }));
       wheelMats.push(gm.material, hub.material);
       hub.rotation.copy(gm.rotation); gm.add(hub);
@@ -411,7 +411,7 @@
     const SL = Math.hypot(SUN_DIR.x, SUN_DIR.y, SUN_DIR.z);
     const EL = Math.hypot(ex, ey, ez) || 1;
     const align = (SUN_DIR.x * ex + SUN_DIR.y * ey + SUN_DIR.z * ez) / (SL * EL);
-    const ecl = 1 - smooth(-.16, .02, align);               // 1 when earth blocks the sun
+    const ecl = smooth(-.16, .02, align);               // 1 when earth blocks the sun
     sunL.intensity = 2.5 * (1 - .92 * ecl);
     ambL.intensity = .8 - .28 * ecl; hemi.intensity = .55 - .3 * ecl;
     earthMesh.rotation.y += dt * .006;
@@ -609,7 +609,7 @@
   C.camNudge = kind => {
     if (kind === "reset") { focusPart = null; cam.tDist = 11.5; cam.tPitch = .32; cam.tYaw = cam.yaw + .6;
       C.onFocus && C.onFocus(null); }
-    else if (parts[kind]) { focusPart = kind; framePart(kind, false); }
+    else if (parts[kind]) { focusPart = kind; framePart(kind, false); C.onFocus && C.onFocus(kind); }
     autoOrbit = false;
   };
   C.toggleAuto = () => { autoOrbit = !autoOrbit; return autoOrbit; };
