@@ -1,0 +1,89 @@
+# Vetted action library. Validator evaluates preconditions deterministically;
+# nothing outside this file can be proposed — safe-by-design (plan §4.5).
+version: 1
+actions:
+  switch_heater_b:
+    name: "Switch to redundant heater circuit B"
+    tier: auto_safe
+    effect: "Restores battery heating; load impact +2.2 W"
+    preconditions:
+      - {field: power_balance_w, op: ">=", value: 0.5}
+      - {field: battery_temp_c,  op: "<",  value: 5.0}
+      - {field: heater_cmd_cooldown_s, op: ">=", value: 300}
+    recover: "battery_temp slope > +0.5 C/h within 1 h"
+
+  battery_protect_limit:
+    name: "Raise battery protection floor to 40% SOC"
+    tier: auto_safe
+    effect: "Trades duration for cycle-life safety"
+    preconditions:
+      - {field: soc_pct, op: ">", value: 45.0}
+      - {field: eclipse_minutes_left, op: "<=", value: 55}
+    recover: "SOC stabilises > 50% for 2 orbits"
+
+  derate_payload_20:
+    name: "Derate payload duty by 20%"
+    tier: propose
+    effect: "Frees ~5 W average; slows science return"
+    preconditions:
+      - {field: soc_pct, op: "<", value: 60.0}
+    recover: "operator release"
+
+  drop_noncritical_loads:
+    name: "Shed non-critical loads (heater B on spare bus)"
+    tier: propose
+    effect: "Frees ~4 W; brief data gap on payload"
+    preconditions: []
+    recover: "operator release"
+
+  wheel_derate_50:
+    name: "Derate reaction-wheel speed limit by 50%"
+    tier: propose
+    effect: "Reduces bearing stress; slower slews"
+    preconditions:
+      - {field: wheel_temp_c, op: ">", value: 45.0}
+    recover: "wheel_temp < 40 C for 3 orbits"
+
+  momentum_dump_plan:
+    name: "Schedule magnetic momentum dump next safe window"
+    tier: advisory
+    effect: "Prepares for possible wheel saturation"
+    preconditions: []
+    recover: "n/a"
+
+  power_limit_impose:
+    name: "Impose payload bus power limit +10%"
+    tier: auto_safe
+    effect: "Caps runaway draw instantly"
+    preconditions:
+      - {field: solar_output_w, op: ">", value: 14.0}
+    recover: "power_balance_w > 1.0 for 2 orbits"
+
+  enter_safe_mode:
+    name: "Enter spacecraft safe mode"
+    tier: propose
+    effect: "3-axis sun-point; science off; max safety margin"
+    preconditions:
+      - {field: battery_temp_c, op: ">", value: 38.0}
+    recover: "ground-directed exit"
+
+  rely_on_backup_unit:
+    name: "Flag sensor as backup-referenced in FDP"
+    tier: advisory
+    effect: "Pipeline trusts redundant channel; no actuation"
+    preconditions: []
+    recover: "after calibration"
+
+  schedule_calibration:
+    name: "Queue ground calibration pass for flagged channel"
+    tier: advisory
+    effect: "Removes bias/drift at source"
+    preconditions: []
+    recover: "n/a"
+
+  ground_review:
+    name: "Open anomaly review ticket with evidence bundle"
+    tier: auto_safe
+    effect: "Human-in-the-loop record; no actuation"
+    preconditions: []
+    recover: "ticket closed by flight director"

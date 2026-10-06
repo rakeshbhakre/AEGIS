@@ -1,0 +1,90 @@
+# FMECA-style fault ontology — the domain knowledge that anchors RCA.
+# Single source of truth shared by: twin fault catalogue, RCA signatures,
+# Guard action library. Editable at runtime; demo adds a mode in minutes.
+version: 1
+faults:
+  - id: heater_stall
+    name: "Heater controller stall / latch-up"
+    subsystem: EPS
+    prior: 0.12
+    signature:
+      heater_current:  {dir: down, kind: jump}
+      battery_temp:    {dir: down, kind: ramp}
+      battery_voltage: {dir: down, kind: ramp}
+    propagation: [[heater_current, battery_temp, 6], [battery_temp, battery_voltage, 40]]
+    mitigations: [switch_heater_b, derate_payload_20, ground_review]
+
+  - id: cell_sag
+    name: "Battery cell capacity fade / sag under load"
+    subsystem: EPS
+    prior: 0.15
+    signature:
+      battery_voltage: {dir: down, kind: ramp}
+      soc:             {dir: down, kind: ramp}
+      battery_current: {dir: up,   kind: ramp}
+    propagation: [[soc, battery_voltage, 12]]
+    mitigations: [battery_protect_limit, drop_noncritical_loads, ground_review]
+
+  - id: wheel_friction
+    name: "Reaction-wheel bearing degradation"
+    subsystem: ADCS
+    prior: 0.10
+    signature:
+      wheel_current:  {dir: up,   kind: ramp}
+      wheel_temp:     {dir: up,   kind: ramp}
+      wheel_speed:    {dir: down, kind: ramp}
+      attitude_err:   {dir: up,   kind: ramp}
+    propagation: [[wheel_current, wheel_temp, 25], [wheel_speed, attitude_err, 5]]
+    mitigations: [wheel_derate_50, momentum_dump_plan, ground_review]
+
+  - id: thermal_runaway
+    name: "Cell thermal excursion / runaway onset"
+    subsystem: THERMAL
+    prior: 0.05
+    signature:
+      battery_temp:    {dir: up,   kind: jump}
+      battery_voltage: {dir: down, kind: ramp}
+      cpu_load:        {dir: up,   kind: ramp}
+    propagation: [[battery_temp, battery_voltage, 30]]
+    mitigations: [enter_safe_mode, ground_review]
+
+  - id: payload_overload
+    name: "Payload power overrun"
+    subsystem: PAYLOAD
+    prior: 0.10
+    signature:
+      payload_power: {dir: up,   kind: jump}
+      payload_temp:  {dir: up,   kind: ramp}
+      soc:           {dir: down, kind: ramp}
+    propagation: [[payload_power, soc, 20]]
+    mitigations: [power_limit_impose, derate_payload_20]
+
+  - id: sensor_drift
+    name: "Sensor drift (data fault — do not actuate)"
+    subsystem: EPS
+    prior: 0.20
+    data_fault: true
+    signature:
+      battery_voltage: {dir: up, kind: ramp}
+    propagation: []
+    mitigations: [rely_on_backup_unit, schedule_calibration]
+
+  - id: sensor_stuck
+    name: "Sensor frozen / stuck-at (data fault)"
+    subsystem: EPS
+    prior: 0.15
+    data_fault: true
+    signature:
+      battery_temp: {dir: flat, kind: freeze}
+    propagation: []
+    mitigations: [rely_on_backup_unit, schedule_calibration]
+
+  - id: sensor_bias
+    name: "Sensor step bias (data fault)"
+    subsystem: EPS
+    prior: 0.10
+    data_fault: true
+    signature:
+      solar_current: {dir: up, kind: jump}
+    propagation: []
+    mitigations: [rely_on_backup_unit]
